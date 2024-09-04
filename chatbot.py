@@ -1,113 +1,89 @@
-import pickle
 import pandas as pd
-from scipy.sparse import csr_matrix, hstack
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.linear_model import LinearRegression
+from fuzzywuzzy import process
 import re
 
-# Load the vectorizer and model
-with open("vectorizer.pkl", "rb") as f:
-    vectorizer = pickle.load(f)
+# Load dataset
+df = pd.read_excel(r"C:\Users\R.SANTOSH\Documents\ai_bot\water.xlsx")
 
-with open("model.pkl", "rb") as f:
-    model = pickle.load(f)
+# Rename columns based on the dataset inspection
+df.columns = ['Cropcode', 'Product', 'Green', 'Blue', 'Grey', 'Total']
 
-# Load the cleaned dataset for reference
-data = pd.read_excel(r"C:\Users\R.SANTOSH\Downloads\water.xlsx")
+# Drop rows with NaN in the 'Product' column
+df.dropna(subset=['Product'], inplace=True)
 
-# Rename the columns to match what your code expects
-rename_dict = {
-    'Column1': 'CropCode',
-    'Column2': 'ProductDescription',
-    'Column3': 'GreenWaterFootprint',
-    'Column4': 'BlueWaterFootprint',
-    'Column5': 'GreyWaterFootprint',
-    'Column6': 'TotalWaterFootprint'
-}
-data = data.rename(columns=rename_dict)
+# Convert columns to numeric, replacing non-numeric values with NaN
+df['Green'] = pd.to_numeric(df['Green'], errors='coerce').fillna(0).astype(float)
+df['Blue'] = pd.to_numeric(df['Blue'], errors='coerce').fillna(0).astype(float)
+df['Grey'] = pd.to_numeric(df['Grey'], errors='coerce').fillna(0).astype(float)
+df['Total'] = pd.to_numeric(df['Total'], errors='coerce').fillna(0).astype(float)
 
-# Confirm the renaming worked
-print("Columns after renaming:", data.columns)
+# Create a dictionary for water footprints
+water_footprints = df.set_index('Product').to_dict(orient='index')
 
-def parse_input(user_input):
-    # Use regex to extract product description and quantity
-    match = re.search(r'(?P<quantity>\d+)\s*(?P<product_description>[a-zA-Z\s]+)', user_input)
+def get_product_info(product_name):
+    # Extract and normalize product names from the dataset
+    products = water_footprints.keys()
     
-    if match:
-        quantity = float(match.group('quantity'))
-        product_description = match.group('product_description').strip()
-        return product_description, quantity
-    else:
-        # If regex fails, try to split assuming "product description quantity" format
-        try:
-            product_description, quantity = user_input.rsplit(' ', 1)
-            quantity = float(quantity)
-            return product_description, quantity
-        except ValueError:
-            return None, None
+    # Find the best match using fuzzy matching
+    best_match, score = process.extractOne(product_name, products)
+    
+    if score < 80:  # Adjust threshold as needed
+        return None, "Product not found. Please try another one."
+    
+    return best_match, None
 
-def predict_water_footprint(product_description, quantity):
-    # Find the matching product in the dataset
-    product_data = data[data['ProductDescription'].str.lower() == product_description.lower()]
+def calculate_water_footprint(product, quantity):
+    product_info = water_footprints.get(product)
     
-    if not product_data.empty:
-        # Get the numeric features directly from the dataset
-        green_water = product_data['GreenWaterFootprint'].values[0]
-        blue_water = product_data['BlueWaterFootprint'].values[0]
-        grey_water = product_data['GreyWaterFootprint'].values[0]
-    else:
-        # Handle missing or unknown products
-        green_water = 0
-        blue_water = 0
-        grey_water = 0
+    if not product_info:
+        return "Product not found. Please try another one."
+    
+    green = product_info['Green']
+    blue = product_info['Blue']
+    grey = product_info['Grey']
+    total = product_info['Total']
+    
+    green_total = green * quantity
+    blue_total = blue * quantity
+    grey_total = grey * quantity
+    total_total = total * quantity
+    
+    return (f"For {quantity} kg of {product}:\n"
+            f"- Green Water Footprint: {green_total:.2f} liters\n"
+            f"- Blue Water Footprint: {blue_total:.2f} liters\n"
+            f"- Grey Water Footprint: {grey_total:.2f} liters\n"
+            f"- Total Water Footprint: {total_total:.2f} liters")
 
-    # Create a dummy dataframe for numeric features
-    dummy_df = pd.DataFrame({
-        'GreenWaterFootprint': [green_water], 
-        'BlueWaterFootprint': [blue_water], 
-        'GreyWaterFootprint': [grey_water]
-    })
-    
-    # Ensure the numeric features are in the correct sparse matrix format
-    numeric_features = csr_matrix(dummy_df.values)
-    
-    # Vectorize the input description
-    product_vector = vectorizer.transform([product_description])
-    
-    # Ensure product_vector is a sparse matrix
-    if not isinstance(product_vector, csr_matrix):
-        product_vector = csr_matrix(product_vector)
-    
-    # Combine the product vector with numeric features
-    X_input = hstack([product_vector, numeric_features])
-    
-    # Predict the water footprint using the model
-    predicted_footprint = model.predict(X_input)[0]
-    
-    # Calculate the total footprint based on quantity
-    total_footprint = predicted_footprint * quantity
-    
-    return total_footprint
-
-# Main chatbot loop
 print("Welcome to the Water Footprint Chatbot!")
 print("You can ask about the water footprint of any product.")
-print("For example, you can say 'Give me the water footprint for 5 units of rice' or 'rice 5'.")
+print("For example, you can say 'Give me the water footprint for 5 kg of rice' or 'rice 5'.")
 
 while True:
-    user_input = input("Enter a product description and quantity or type 'exit' to quit: ").strip()
+    user_input = input("Enter a product description and quantity or type 'exit' to quit: ").strip().lower()
     
-    if user_input.lower() == 'exit':
+    if user_input == 'exit':
         break
-
-    product_description, quantity = parse_input(user_input)
     
-    if product_description and quantity:
+    # Extract product and quantity from the user input
+    match = re.match(r'(.*?)(\d+)\s*kg$', user_input)
+    
+    if match:
+        product_name = match.group(1).strip()
         try:
-            # Predict the water footprint
-            footprint = predict_water_footprint(product_description, quantity)
-            print(f"The estimated water footprint for {quantity} units of {product_description} is {footprint:.2f} cubic meters.")
-        except Exception as e:
-            print(f"An error occurred: {e}")
+            quantity = float(match.group(2))
+        except ValueError:
+            print("Invalid quantity. Please enter a numeric value followed by 'kg'.")
+            continue
+        
+        # Get the best matching product
+        product_name, error = get_product_info(product_name)
+        
+        if error:
+            print(error)
+        else:
+            result = calculate_water_footprint(product_name, quantity)
+            print(result)
     else:
-        print("Sorry, I couldn't understand your input. Please provide the product and quantity in a clear format.")
+        print("Invalid input format. Please enter the product description followed by 'kg'.")
+
+print("Thank you for using the Water Footprint Chatbot!")

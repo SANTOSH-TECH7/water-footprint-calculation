@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 import pickle
 
 # Load and preprocess data
-data = pd.read_excel(r"C:\Users\R.SANTOSH\Downloads\water.xlsx")
+data = pd.read_excel(r"C:\Users\R.SANTOSH\Documents\ai_bot\water.xlsx")
 
 # Define the expected column names
 rename_dict = {
